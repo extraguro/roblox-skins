@@ -26,7 +26,11 @@ main.list{grid-template-columns:1fr}
 .av{width:56px;height:56px;border-radius:50%;flex:none;background:var(--bd);object-fit:cover;display:grid;place-items:center;font-weight:600;font-size:22px;color:var(--mut)}
 .t{font-weight:600;line-height:1.25;word-break:break-word}.u{color:var(--ac);font-size:13px}
 .s{color:var(--mut);font-size:12px;margin:2px 0 6px}.d{font-size:13px;color:#c3ccd5;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line;word-break:break-word}
-.err{color:#ff7b72}#empty{max-width:1200px;margin:30px auto;color:var(--mut);text-align:center}
+.err{color:#ff7b72}
+#auth{max-width:420px;margin:30px auto;padding:20px;background:var(--card);border:1px solid var(--bd);border-radius:14px}
+#auth h2{margin:0 0 4px;font-size:18px}#auth p{color:var(--mut);font-size:13px;margin:0 0 14px}
+#auth label{margin-bottom:10px}#auth input{width:100%}#auth button{width:100%;margin-top:4px}#auth a{color:var(--ac)}
+#acc{color:var(--mut);font-size:13px;margin-left:auto;display:flex;gap:8px;align-items:center}#empty{max-width:1200px;margin:30px auto;color:var(--mut);text-align:center}
 </style></head><body>
 <header><div class="wrap">
 <form id="f" class="row">
@@ -39,6 +43,7 @@ main.list{grid-template-columns:1fr}
 <label>Пауза, с<input name="delay" type="number" value="1.2" step="0.1" min="0.3"></label>
 <button id="go">Искать</button><button type="button" id="stop" class="stop" hidden>Стоп</button>
 <button type="button" id="tog" class="sec">Фильтры ▾</button>
+<span id="acc" hidden></span>
 </form>
 <div id="fl" class="fl" hidden>
  <div class="row">
@@ -60,6 +65,7 @@ main.list{grid-template-columns:1fr}
 </div>
 <div id="bar"><span id="st">Введи слово и нажми «Искать»</span> · <b id="cnt"></b><div id="prog"><div></div></div></div>
 </div></header>
+<section id="auth" hidden></section>
 <main id="grid"></main><div id="empty" hidden>Ничего не подходит под фильтры</div>
 <script>
 const $=s=>document.querySelector(s),grid=$('#grid');let es=null,total=1,all=[];const on=new Set();
@@ -97,7 +103,7 @@ $('#tog').onclick=()=>{const h=$('#fl').hidden=!$('#fl').hidden;$('#tog').textCo
 $('#csv').onclick=()=>{const r=visible();const q=v=>'"'+String(v??'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
  const lines=[['username','title','type','subscribers','verified','url','about'].join(',')].concat(r.map(c=>[c.username,c.title,c.type,c.subs,c.verified,c.url,c.about].map(q).join(',')));
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\n')],{type:'text/csv'}));a.download='channels.csv';a.click()};
-function end(msg,err){$('#go').disabled=false;$('#stop').hidden=true;if(es){es.close();es=null}if(msg)$('#st').innerHTML=err?`<span class="err">${esc(msg)}</span>`:esc(msg)}
+function end(msg,err){$('#go').disabled=$('#acc').hidden;$('#stop').hidden=true;if(es){es.close();es=null}if(msg)$('#st').innerHTML=err?`<span class="err">${esc(msg)}</span>`:esc(msg)}
 $('#f').onsubmit=e=>{e.preventDefault();if(es)return;all=[];render();$('#prog div').style.width='0';
  $('#go').disabled=true;$('#stop').hidden=false;$('#st').textContent='Подключаюсь…';
  es=new EventSource('/api/scan?'+new URLSearchParams(new FormData(e.target)));
@@ -109,4 +115,27 @@ $('#f').onsubmit=e=>{e.preventDefault();if(es)return;all=[];render();$('#prog di
   else if(d.event==='error')end(d.msg,true)};
  es.onerror=()=>{if(es)end('Соединение закрыто (возможно, скан уже идёт в другой вкладке)',true)}};
 $('#stop').onclick=()=>end('Остановлено');
+
+// ---------- вход в аккаунт ----------
+const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||('Ошибка '+r.status));return d});
+function authUI(st){const box=$('#auth'),acc=$('#acc'),ok=st.authorized;
+ $('#go').disabled=!ok||!!es;acc.hidden=!ok;box.hidden=ok;
+ if(ok){acc.innerHTML=st.busy?'Аккаунт подключён':`👤 ${esc(st.name)}${st.username?' @'+esc(st.username):''} <button type="button" class="sec" id="lo">Выйти</button>`;
+  const lo=$('#lo');if(lo)lo.onclick=async()=>{if(!confirm('Выйти из аккаунта?'))return;try{await post('/api/auth/logout');}catch(e){alert(e.message)}checkAuth()};return}
+ const m=st.state;let h='';
+ if(m==='phone')h=`<h2>Вход в Telegram</h2><p>Запросы будут идти от этого аккаунта. Лучше использовать отдельный, не основной.</p>
+  ${st.has_creds?'':`<label>api_id<input id="aid" inputmode="numeric" autocomplete="off"></label><label>api_hash<input id="ah" autocomplete="off"></label><p>Получить на <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> → API development tools</p>`}
+  <label>Номер телефона<input id="ph" placeholder="+380501234567" autocomplete="off"></label><button id="a1">Получить код</button>`;
+ else if(m==='code')h=`<h2>Код из Telegram</h2><p>Код пришёл в приложение Telegram (или по SMS).</p><label>Код<input id="cd" inputmode="numeric" autocomplete="off"></label><button id="a2">Войти</button><button class="sec" id="back" type="button">Другой номер</button>`;
+ else h=`<h2>Пароль 2FA</h2><p>На аккаунте включена двухэтапная проверка.</p><label>Пароль<input id="pw" type="password" autocomplete="off"></label><button id="a3">Войти</button>`;
+ box.innerHTML=h+'<div id="aerr" class="err" style="margin-top:10px"></div>';
+ const run=(id,fn)=>{const b=$(id);if(!b)return;b.onclick=async()=>{b.disabled=true;$('#aerr').textContent='';try{await fn();await checkAuth()}catch(e){$('#aerr').textContent=e.message;b.disabled=false}}};
+ run('#a1',()=>post('/api/auth/send',{phone:$('#ph').value,api_id:$('#aid')?.value,api_hash:$('#ah')?.value}));
+ run('#a2',()=>post('/api/auth/code',{code:$('#cd').value}));
+ run('#a3',()=>post('/api/auth/password',{password:$('#pw').value}));
+ const bk=$('#back');if(bk)bk.onclick=async()=>{await post('/api/auth/logout').catch(()=>{});checkAuth()};
+ const inp=box.querySelector('input:not([id=aid]):not([id=ah])')||box.querySelector('input');if(inp)inp.focus();
+ box.querySelectorAll('input').forEach(i=>i.onkeydown=e=>{if(e.key==='Enter'){const b=box.querySelector('button:not(.sec)');if(b)b.click()}})}
+async function checkAuth(){try{authUI(await fetch('/api/auth/status').then(r=>r.json()))}catch(e){$('#st').textContent='Нет связи с сервером'}}
+checkAuth();
 </script></body></html>
