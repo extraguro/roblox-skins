@@ -646,7 +646,7 @@ def api_scan():
                   posts=max(0, min(50, int(g("posts", 10)))),
                   check_links=g("check_links") == "1",
                   mode=(g("mode") if g("mode") in ("web", "brute", "search") else "web"),
-                  search_numbers=max(0, min(50, int(g("search_numbers", 0)))))
+                  search_numbers=max(0, min(999, int(g("search_numbers", 0)))))
     if not scan_lock.acquire(blocking=False):
         # прошлый скан ещё жив (например, после обновления страницы) — останавливаем и ждём
         if ACTIVE["stop"] is not None:

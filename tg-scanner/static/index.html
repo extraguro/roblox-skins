@@ -36,7 +36,7 @@ main.list{grid-template-columns:1fr}
 <form id="f" class="row">
 <label>Режим<select name="mode" id="mode"><option value="web">Перебор через t.me (без аккаунта)</option><option value="search">Поиск по слову (Telegram API)</option><option value="brute">Перебор через API (аккаунт)</option></select></label>
 <label>Слово<input name="word" placeholder="channel" required></label>
-<label class="m-search">+ запросы с числами 1…N<input name="search_numbers" type="number" value="0" min="0" max="50" title="0 = только само слово. Каждый вариант — отдельный запрос к Telegram"></label>
+<label class="m-search">+ запросы с числами 1…N<input name="search_numbers" type="number" value="0" min="0" max="999" title="0 = только само слово. Каждый вариант — отдельный запрос к Telegram"></label>
 <label class="m-brute">От<input name="start" type="number" value="1" min="0"></label>
 <label class="m-brute">До<input name="max" type="number" value="900" min="1"></label>
 <label>Найти штук<input name="limit" type="number" value="200" min="1"></label>
