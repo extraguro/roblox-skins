@@ -49,6 +49,7 @@ async def nap(sec):
 
 
 INVITE_RE = re.compile(r"(?:t(?:elegram)?\.me/(?:\+|joinchat/)|tg://join\?invite=)([A-Za-z0-9_-]{10,})", re.I)
+EMPTY_MAX = 1  # канал с таким числом участников и меньше считаем «пустым» (там только создатель)
 MAX_LINKS = 30  # максимум уникальных ссылок на канал
 
 
@@ -123,7 +124,11 @@ async def scan_links(client, sources, cache, delay):
         if new:
             await nap(delay)
     dead = [i["url"] for i in items if i["status"] == "dead"]
+    alive = [i for i in items if i["status"] == "alive"]
+    empty = sum(i.get("members") is not None and i["members"] <= EMPTY_MAX for i in alive)
+    request = sum(bool(i.get("request_needed")) for i in alive)
     return {"total": len(items), "dead": len(dead), "dead_list": dead,
+            "empty": empty, "request": request,
             "unknown": sum(i["status"] == "unknown" for i in items), "items": items, "checked": True}
 
 

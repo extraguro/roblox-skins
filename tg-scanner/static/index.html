@@ -57,7 +57,7 @@ main.list{grid-template-columns:1fr}
   <label>Создан до<input id="fd2" type="date"></label>
   <label>Ссылок всего ≥<input id="flinks" type="number" min="0" placeholder="0"></label>
   <label>Рабочих ссылок ≥<input id="falive" type="number" min="0" placeholder="0"></label>
-  <label>Мёртвых ссылок ≥<input id="fdead" type="number" min="0" placeholder="0"></label>
+  <label>Мёртвых/пустых ссылок ≥<input id="fdead" title="мёртвые по ответу Telegram + каналы, где ≤1 участника" type="number" min="0" placeholder="0"></label>
   <label>Сортировка<select id="sort"><option value="order">По порядку поиска</option><option value="subs-desc">Подписчики ↓</option><option value="subs-asc">Подписчики ↑</option><option value="new">Создан: новые сверху</option><option value="old">Создан: старые сверху</option><option value="links">Ссылок всего ↓</option><option value="dead">Мёртвые ссылки ↓</option><option value="name">Название А–Я</option><option value="user">Username А–Я</option></select></label>
   <label>Вид<select id="view"><option value="grid">Сетка</option><option value="list">Список</option></select></label>
  </div>
@@ -88,9 +88,9 @@ function postSnip(c){const q=$('#fq').value.trim().toLowerCase();if(!q||$('#fin'
 function fmtDate(c){return c.created?new Date(c.created).toLocaleDateString('ru'):''}
 function linkInfo(c){const l=c.links;if(!l)return'';
  const ic={dead:'✖',alive:'✔',unknown:'?'};
- const tip=esc((l.items||l.dead_list.map(u=>({url:u,status:'dead'}))).map(i=>`${ic[i.status]} ${i.url}`+(i.title?` — ${i.title}`:'')+(i.members!=null?` (${i.members})`:'')+(i.reason?` — ${i.reason}`:'')).join('\n'));
+ const tip=esc((l.items||l.dead_list.map(u=>({url:u,status:'dead'}))).map(i=>`${ic[i.status]} ${i.url}`+(i.title?` — ${i.title}`:'')+(i.members!=null?` (${i.members} уч.)`:'')+(i.request_needed?' · по заявке':'')+(i.reason?` — ${i.reason}`:'')).join('\n'));
  if(l.checked===false)return `<div class="s">🔗 ${l.total} ссылок (не проверялись)</div>`;
- return `<div class="s" title="${tip}">🔗 ${l.total} ссылок · ${l.dead?`<span class="err">⚠ ${l.dead} мёртвых</span>`:'мёртвых нет'}${l.unknown?` · ❓ ${l.unknown} не проверено`:''}</div>`}
+ return `<div class="s" title="${tip}">🔗 ${l.total} ссылок · ${l.dead?`<span class="err">⚠ ${l.dead} мёртвых</span>`:(l.empty||l.request?'':'мёртвых нет')}${l.empty?` · <span class="err">👻 ${l.empty} пустых</span>`:''}${l.request?` · 📝 ${l.request} по заявке`:''}${l.unknown?` · ❓ ${l.unknown} не проверено`:''}</div>`}
 function postHit(c,q){return (c.posts||[]).find(p=>p.toLowerCase().includes(q))}
 function matchQ(c,q){const w=$('#fin').value;
  const meta=((c.title||'')+' '+(c.about||'')+' '+c.username).toLowerCase().includes(q);
@@ -98,7 +98,7 @@ function matchQ(c,q){const w=$('#fin').value;
 function visible(){const mn=num('#fmin'),mx=num('#fmax'),q=$('#fq').value.trim().toLowerCase();
  let r=all.filter(c=>{const s=c.subs??0;
   const L=c.links,tl=L?L.total:0,dl=L?L.dead:0,ln=num('#flinks'),an=num('#falive'),dn=num('#fdead');
-  const ck=L?L.checked!==false:false;if(ln!=null&&tl<ln)return false;if(an!=null&&(!ck||(tl-dl)<an))return false;if(dn!=null&&(!ck||dl<dn))return false;
+  const ck=L?L.checked!==false:false;if(ln!=null&&tl<ln)return false;if(an!=null&&(!ck||(tl-dl)<an))return false;if(dn!=null&&(!ck||(dl+(L.empty||0))<dn))return false;
   if(mn!=null&&s<mn)return false;if(mx!=null&&s>mx)return false;
   const d1=$('#fd1').value,d2=$('#fd2').value;
   if(d1||d2){if(!c.created)return false;const d=c.created.slice(0,10);if(d1&&d<d1)return false;if(d2&&d>d2)return false}
