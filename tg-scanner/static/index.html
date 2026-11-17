@@ -55,8 +55,10 @@ main.list{grid-template-columns:1fr}
   <label>Где искать<select id="fin"><option value="all">Название, описание, посты</option><option value="meta">Название и описание</option><option value="posts">Только посты</option></select></label>
   <label>Создан от<input id="fd1" type="date"></label>
   <label>Создан до<input id="fd2" type="date"></label>
+  <label>Ссылок всего ≥<input id="flinks" type="number" min="0" placeholder="0"></label>
+  <label>Рабочих ссылок ≥<input id="falive" type="number" min="0" placeholder="0"></label>
   <label>Мёртвых ссылок ≥<input id="fdead" type="number" min="0" placeholder="0"></label>
-  <label>Сортировка<select id="sort"><option value="order">По порядку поиска</option><option value="subs-desc">Подписчики ↓</option><option value="subs-asc">Подписчики ↑</option><option value="new">Создан: новые сверху</option><option value="old">Создан: старые сверху</option><option value="dead">Мёртвые ссылки ↓</option><option value="name">Название А–Я</option><option value="user">Username А–Я</option></select></label>
+  <label>Сортировка<select id="sort"><option value="order">По порядку поиска</option><option value="subs-desc">Подписчики ↓</option><option value="subs-asc">Подписчики ↑</option><option value="new">Создан: новые сверху</option><option value="old">Создан: старые сверху</option><option value="links">Ссылок всего ↓</option><option value="dead">Мёртвые ссылки ↓</option><option value="name">Название А–Я</option><option value="user">Username А–Я</option></select></label>
   <label>Вид<select id="view"><option value="grid">Сетка</option><option value="list">Список</option></select></label>
  </div>
  <div class="chips">
@@ -91,7 +93,8 @@ function matchQ(c,q){const w=$('#fin').value;
  if(w==='meta')return meta;if(w==='posts')return !!postHit(c,q);return meta||!!postHit(c,q)}
 function visible(){const mn=num('#fmin'),mx=num('#fmax'),q=$('#fq').value.trim().toLowerCase();
  let r=all.filter(c=>{const s=c.subs??0;
-  const dn=num('#fdead');if(dn!=null&&((c.links?.dead)??0)<dn)return false;
+  const L=c.links,tl=L?L.total:0,dl=L?L.dead:0,ln=num('#flinks'),an=num('#falive'),dn=num('#fdead');
+  if(ln!=null&&tl<ln)return false;if(an!=null&&(tl-dl)<an)return false;if(dn!=null&&dl<dn)return false;
   if(mn!=null&&s<mn)return false;if(mx!=null&&s>mx)return false;
   const d1=$('#fd1').value,d2=$('#fd2').value;
   if(d1||d2){if(!c.created)return false;const d=c.created.slice(0,10);if(d1&&d<d1)return false;if(d2&&d>d2)return false}
@@ -102,6 +105,7 @@ function visible(){const mn=num('#fmin'),mx=num('#fmax'),q=$('#fq').value.trim()
  const so=$('#sort').value;
  if(so==='subs-desc')r.sort((a,b)=>(b.subs??-1)-(a.subs??-1));
  else if(so==='subs-asc')r.sort((a,b)=>(a.subs??1e12)-(b.subs??1e12));
+ else if(so==='links')r.sort((a,b)=>((b.links?.total)??-1)-((a.links?.total)??-1));
  else if(so==='dead')r.sort((a,b)=>((b.links?.dead)??-1)-((a.links?.dead)??-1));
  else if(so==='new')r.sort((a,b)=>(b.created||'').localeCompare(a.created||''));
  else if(so==='old')r.sort((a,b)=>(a.created||'9').localeCompare(b.created||'9'));
@@ -112,13 +116,13 @@ function render(){const r=visible();grid.className=$('#view').value==='list'?'li
  grid.replaceChildren(...r.map(cardEl));$('#cnt').textContent=all.length?`показано ${r.length} из ${all.length}`:'';
  $('#empty').hidden=!(all.length&&!r.length)}
 let t=null;const rs=()=>{clearTimeout(t);t=setTimeout(render,80)};
-['#fmin','#fmax','#fq','#fdead'].forEach(s=>$(s).oninput=rs);['#sort','#view','#fin','#fd1','#fd2'].forEach(s=>$(s).onchange=render);
+['#fmin','#fmax','#fq','#fdead','#flinks','#falive'].forEach(s=>$(s).oninput=rs);['#sort','#view','#fin','#fd1','#fd2'].forEach(s=>$(s).onchange=render);
 document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{const k=ch.dataset.k;
  if(k==='ch'&&!on.has('ch'))off('gr');if(k==='gr'&&!on.has('gr'))off('ch');
  on.has(k)?on.delete(k):on.add(k);ch.classList.toggle('on',on.has(k));render()});
 function off(k){on.delete(k);document.querySelector(`.chip[data-k=${k}]`).classList.remove('on')}
 $('#reset').onclick=()=>{on.clear();document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
- ['#fmin','#fmax','#fq','#fdead','#fd1','#fd2'].forEach(s=>$(s).value='');$('#fin').value='all';$('#sort').value='order';render()};
+ ['#fmin','#fmax','#fq','#fdead','#flinks','#falive','#fd1','#fd2'].forEach(s=>$(s).value='');$('#fin').value='all';$('#sort').value='order';render()};
 $('#tog').onclick=()=>{const h=$('#fl').hidden=!$('#fl').hidden;$('#tog').textContent=h?'Фильтры ▾':'Фильтры ▴'};
 $('#csv').onclick=()=>{const r=visible();const q=v=>'"'+String(v??'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
  const lines=[['username','title','type','subscribers','verified','url','invite_links','dead_links','created','about'].join(',')].concat(r.map(c=>[c.username,c.title,c.type,c.subs,c.verified,c.url,c.links?.total,c.links?.dead,c.created,c.about].map(q).join(',')));
