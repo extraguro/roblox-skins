@@ -63,7 +63,7 @@ async def fetch(client, name, only_channels):
             "url": f"https://t.me/{name}"}
 
 
-async def scan(q, stop, word, start, end, limit, delay, only_channels):
+async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern):
     api_id, api_hash = os.environ.get("TG_API_ID"), os.environ.get("TG_API_HASH")
     if not api_id or not api_hash:
         q.put({"event": "error", "msg": "Не заданы TG_API_ID / TG_API_HASH"})
@@ -75,7 +75,11 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels):
             q.put({"event": "error", "msg": "Нет входа в Telegram. Один раз запусти: python tg_scan.py test --max 1"})
             return
         found = checked = 0
-        names = list(candidates(word, start, end, True))
+        names = []
+        if pattern in ("plain", "both"):
+            names += list(candidates(word, start, end, True))
+        if pattern in ("underscore", "both"):
+            names += [f"{word}_{i}" for i in range(start, end + 1)]
         q.put({"event": "start", "total": len(names)})
         for name in names:
             if stop.is_set() or found >= limit:
@@ -110,7 +114,8 @@ def api_scan():
         return Response("word required", 400)
     params = dict(word=word, start=int(g("start", 1)), end=int(g("max", 900)),
                   limit=int(g("limit", 200)), delay=float(g("delay", 1.2)),
-                  only_channels=g("channels_only", "1") == "1")
+                  only_channels=g("channels_only", "1") == "1",
+                  pattern=g("pattern", "plain"))
     if not scan_lock.acquire(blocking=False):
         return Response("scan already running", 409)
     q, stop = queue.Queue(), threading.Event()

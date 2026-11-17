@@ -4,48 +4,106 @@
 <style>
 :root{--bg:#0f1419;--card:#18202a;--bd:#263241;--tx:#e6edf3;--mut:#8b98a5;--ac:#2aabee}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px system-ui,sans-serif}
-header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--bd);padding:14px 16px;z-index:5}
-form{display:flex;flex-wrap:wrap;gap:8px;align-items:end;max-width:1200px;margin:auto}
+header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--bd);padding:12px 16px;z-index:5}
+.wrap{max-width:1200px;margin:auto}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-bottom:8px}
 label{display:flex;flex-direction:column;font-size:12px;color:var(--mut);gap:3px}
 input,select{background:var(--card);border:1px solid var(--bd);color:var(--tx);border-radius:8px;padding:8px 10px;font-size:14px}
-input[name=word]{width:200px}input[type=number]{width:90px}
-button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:9px 18px;font-size:14px;cursor:pointer}
-button.stop{background:#e5534b}button:disabled{opacity:.5}
-#bar{max-width:1200px;margin:10px auto 0;color:var(--mut);font-size:13px}
+input[name=word]{width:180px}input[type=number]{width:90px}
+button{background:var(--ac);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:14px;cursor:pointer}
+button.sec{background:var(--card);border:1px solid var(--bd);color:var(--tx)}button.stop{background:#e5534b}button:disabled{opacity:.5}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.chip{border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer;user-select:none}
+.chip.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.fl{border-top:1px solid var(--bd);padding-top:8px;margin-top:4px}
+.fl[hidden]{display:none}
+#bar{color:var(--mut);font-size:13px;margin-top:6px}
 #prog{height:4px;background:var(--bd);border-radius:2px;margin-top:6px;overflow:hidden}#prog div{height:100%;width:0;background:var(--ac);transition:width .2s}
 main{max-width:1200px;margin:16px auto;padding:0 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+main.list{grid-template-columns:1fr}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;display:flex;gap:12px;text-decoration:none;color:inherit}
 .card:hover{border-color:var(--ac)}
 .av{width:56px;height:56px;border-radius:50%;flex:none;background:var(--bd);object-fit:cover;display:grid;place-items:center;font-weight:600;font-size:22px;color:var(--mut)}
 .t{font-weight:600;line-height:1.25;word-break:break-word}.u{color:var(--ac);font-size:13px}
 .s{color:var(--mut);font-size:12px;margin:2px 0 6px}.d{font-size:13px;color:#c3ccd5;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-line;word-break:break-word}
-.err{color:#ff7b72}
+.err{color:#ff7b72}#empty{max-width:1200px;margin:30px auto;color:var(--mut);text-align:center}
 </style></head><body>
-<header><form id="f">
+<header><div class="wrap">
+<form id="f" class="row">
 <label>Слово<input name="word" placeholder="channel" required></label>
 <label>От<input name="start" type="number" value="1" min="0"></label>
 <label>До<input name="max" type="number" value="900" min="1"></label>
 <label>Найти штук<input name="limit" type="number" value="200" min="1"></label>
-<label>Пауза, с<input name="delay" type="number" value="1.2" step="0.1" min="0.3"></label>
+<label>Шаблон<select name="pattern"><option value="plain">word1, word2…</option><option value="underscore">word_1, word_2…</option><option value="both">оба</option></select></label>
 <label>Тип<select name="channels_only"><option value="1">Только каналы</option><option value="0">Каналы и группы</option></select></label>
+<label>Пауза, с<input name="delay" type="number" value="1.2" step="0.1" min="0.3"></label>
 <button id="go">Искать</button><button type="button" id="stop" class="stop" hidden>Стоп</button>
+<button type="button" id="tog" class="sec">Фильтры ▾</button>
 </form>
-<div id="bar"><span id="st">Введи слово и нажми «Искать»</span><div id="prog"><div></div></div></div></header>
-<main id="grid"></main>
+<div id="fl" class="fl" hidden>
+ <div class="row">
+  <label>Подписчиков от<input id="fmin" type="number" min="0" placeholder="0"></label>
+  <label>до<input id="fmax" type="number" min="0" placeholder="∞"></label>
+  <label>Текст в названии/описании<input id="fq" placeholder="поиск…"></label>
+  <label>Сортировка<select id="sort"><option value="order">По порядку поиска</option><option value="subs-desc">Подписчики ↓</option><option value="subs-asc">Подписчики ↑</option><option value="name">Название А–Я</option><option value="user">Username А–Я</option></select></label>
+  <label>Вид<select id="view"><option value="grid">Сетка</option><option value="list">Список</option></select></label>
+ </div>
+ <div class="chips">
+  <span class="chip" data-k="desc">С описанием</span>
+  <span class="chip" data-k="ava">С аватаркой</span>
+  <span class="chip" data-k="ver">Верифицированные</span>
+  <span class="chip" data-k="ch">Только каналы</span>
+  <span class="chip" data-k="gr">Только группы</span>
+  <button type="button" id="reset" class="sec">Сбросить</button>
+  <button type="button" id="csv" class="sec">⬇ CSV</button>
+ </div>
+</div>
+<div id="bar"><span id="st">Введи слово и нажми «Искать»</span> · <b id="cnt"></b><div id="prog"><div></div></div></div>
+</div></header>
+<main id="grid"></main><div id="empty" hidden>Ничего не подходит под фильтры</div>
 <script>
-const $=s=>document.querySelector(s),grid=$('#grid');let es=null,total=1;
-const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function card(c){const a=document.createElement('a');a.className='card';a.href=c.url;a.target='_blank';a.rel='noopener';
- const av=c.avatar?`<img class="av" src="${c.avatar}" loading="lazy">`:`<div class="av">${esc(c.title[0]||'?')}</div>`;
+const $=s=>document.querySelector(s),grid=$('#grid');let es=null,total=1,all=[];const on=new Set();
+const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num=id=>{const v=$(id).value;return v===''?null:+v};
+function cardEl(c){const a=document.createElement('a');a.className='card';a.href=c.url;a.target='_blank';a.rel='noopener';
+ const av=c.avatar?`<img class="av" src="${c.avatar}" loading="lazy">`:`<div class="av">${esc((c.title||'?')[0])}</div>`;
  const subs=c.subs!=null?c.subs.toLocaleString('ru')+' подп.':'';
- a.innerHTML=`${av}<div><div class="t">${esc(c.title)}${c.verified?' ✔':''}</div><div class="u">@${c.username}</div><div class="s">${c.type==='channel'?'Канал':'Группа'} · ${subs}</div><div class="d">${esc(c.about)}</div></div>`;grid.append(a)}
+ a.innerHTML=`${av}<div><div class="t">${esc(c.title)}${c.verified?' ✔':''}</div><div class="u">@${c.username}</div><div class="s">${c.type==='channel'?'Канал':'Группа'} · ${subs}</div><div class="d">${esc(c.about)}</div></div>`;return a}
+function visible(){const mn=num('#fmin'),mx=num('#fmax'),q=$('#fq').value.trim().toLowerCase();
+ let r=all.filter(c=>{const s=c.subs??0;
+  if(mn!=null&&s<mn)return false;if(mx!=null&&s>mx)return false;
+  if(q&&!((c.title||'')+' '+(c.about||'')+' '+c.username).toLowerCase().includes(q))return false;
+  if(on.has('desc')&&!c.about)return false;if(on.has('ava')&&!c.avatar)return false;
+  if(on.has('ver')&&!c.verified)return false;if(on.has('ch')&&c.type!=='channel')return false;
+  if(on.has('gr')&&c.type!=='group')return false;return true});
+ const so=$('#sort').value;
+ if(so==='subs-desc')r.sort((a,b)=>(b.subs??-1)-(a.subs??-1));
+ else if(so==='subs-asc')r.sort((a,b)=>(a.subs??1e12)-(b.subs??1e12));
+ else if(so==='name')r.sort((a,b)=>(a.title||'').localeCompare(b.title||'','ru'));
+ else if(so==='user')r.sort((a,b)=>a.username.localeCompare(b.username));
+ return r}
+function render(){const r=visible();grid.className=$('#view').value==='list'?'list':'';
+ grid.replaceChildren(...r.map(cardEl));$('#cnt').textContent=all.length?`показано ${r.length} из ${all.length}`:'';
+ $('#empty').hidden=!(all.length&&!r.length)}
+let t=null;const rs=()=>{clearTimeout(t);t=setTimeout(render,80)};
+['#fmin','#fmax','#fq'].forEach(s=>$(s).oninput=rs);['#sort','#view'].forEach(s=>$(s).onchange=render);
+document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{const k=ch.dataset.k;
+ if(k==='ch'&&!on.has('ch'))off('gr');if(k==='gr'&&!on.has('gr'))off('ch');
+ on.has(k)?on.delete(k):on.add(k);ch.classList.toggle('on',on.has(k));render()});
+function off(k){on.delete(k);document.querySelector(`.chip[data-k=${k}]`).classList.remove('on')}
+$('#reset').onclick=()=>{on.clear();document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+ ['#fmin','#fmax','#fq'].forEach(s=>$(s).value='');$('#sort').value='order';render()};
+$('#tog').onclick=()=>{const h=$('#fl').hidden=!$('#fl').hidden;$('#tog').textContent=h?'Фильтры ▾':'Фильтры ▴'};
+$('#csv').onclick=()=>{const r=visible();const q=v=>'"'+String(v??'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
+ const lines=[['username','title','type','subscribers','verified','url','about'].join(',')].concat(r.map(c=>[c.username,c.title,c.type,c.subs,c.verified,c.url,c.about].map(q).join(',')));
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\n')],{type:'text/csv'}));a.download='channels.csv';a.click()};
 function end(msg,err){$('#go').disabled=false;$('#stop').hidden=true;if(es){es.close();es=null}if(msg)$('#st').innerHTML=err?`<span class="err">${esc(msg)}</span>`:esc(msg)}
-$('#f').onsubmit=e=>{e.preventDefault();if(es)return;grid.innerHTML='';$('#prog div').style.width='0';
+$('#f').onsubmit=e=>{e.preventDefault();if(es)return;all=[];render();$('#prog div').style.width='0';
  $('#go').disabled=true;$('#stop').hidden=false;$('#st').textContent='Подключаюсь…';
  es=new EventSource('/api/scan?'+new URLSearchParams(new FormData(e.target)));
  es.onmessage=m=>{const d=JSON.parse(m.data);
   if(d.event==='start')total=d.total;
-  else if(d.event==='found')card(d.card);
+  else if(d.event==='found'){all.push(d.card);rs()}
   else if(d.event==='progress'){$('#st').textContent=`Проверено ${d.checked}/${total} · найдено ${d.found} · @${d.current}`;$('#prog div').style.width=(d.checked/total*100)+'%'}
   else if(d.event==='done')end(`Готово: проверено ${d.checked}, найдено ${d.found}`);
   else if(d.event==='error')end(d.msg,true)};
