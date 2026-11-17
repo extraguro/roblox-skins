@@ -86,7 +86,10 @@ function cardEl(c){const a=document.createElement('a');a.className='card';a.href
  a.innerHTML=`${av}<div><div class="t">${esc(c.title)}${c.verified?' ✔':''}</div><div class="u">@${c.username}</div><div class="s">${c.type==='channel'?'Канал':'Группа'} · ${subs}${c.created?' · создан '+fmtDate(c):''}</div><div class="d">${esc(c.about)}</div>${postSnip(c)}${linkInfo(c)}</div>`;return a}
 function postSnip(c){const q=$('#fq').value.trim().toLowerCase();if(!q||$('#fin').value==='meta')return'';const p=postHit(c,q);if(!p)return'';const i=p.toLowerCase().indexOf(q),s=Math.max(0,i-40);return `<div class="s">📝 …${esc(p.slice(s,i+q.length+80).replace(/\s+/g,' '))}…</div>`}
 function fmtDate(c){return c.created?new Date(c.created).toLocaleDateString('ru'):''}
-function linkInfo(c){const l=c.links;if(!l)return'';const tip=esc(l.dead_list.join('\n'));return `<div class="s" title="${tip}">🔗 ${l.total} ссылок · ${l.dead?`<span class="err">⚠ ${l.dead} мёртвых</span>`:'мёртвых нет'}</div>`}
+function linkInfo(c){const l=c.links;if(!l)return'';
+ const ic={dead:'✖',alive:'✔',unknown:'?'};
+ const tip=esc((l.items||l.dead_list.map(u=>({url:u,status:'dead'}))).map(i=>`${ic[i.status]} ${i.url}`+(i.title?` — ${i.title}`:'')+(i.members!=null?` (${i.members})`:'')+(i.reason?` — ${i.reason}`:'')).join('\n'));
+ return `<div class="s" title="${tip}">🔗 ${l.total} ссылок · ${l.dead?`<span class="err">⚠ ${l.dead} мёртвых</span>`:'мёртвых нет'}${l.unknown?` · ❓ ${l.unknown} не проверено`:''}</div>`}
 function postHit(c,q){return (c.posts||[]).find(p=>p.toLowerCase().includes(q))}
 function matchQ(c,q){const w=$('#fin').value;
  const meta=((c.title||'')+' '+(c.about||'')+' '+c.username).toLowerCase().includes(q);

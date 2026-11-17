@@ -53,21 +53,26 @@ MAX_LINKS = 30  # максимум уникальных ссылок на кан
 
 
 async def check_invite(client, h, cache):
-    """True = ссылка рабочая, False = просрочена/недействительна, None = не удалось проверить."""
+    """-> (status, info): alive | dead | unknown. Кэшируется по хэшу ссылки."""
     if h in cache:
         return cache[h]
     while True:
         try:
-            await client(functions.messages.CheckChatInviteRequest(h))
-            cache[h] = True
-        except (InviteHashExpiredError, InviteHashInvalidError):
-            cache[h] = False
+            r = await client(functions.messages.CheckChatInviteRequest(h))
+            chat = getattr(r, "chat", None)
+            res = ("alive", {"kind": type(r).__name__,
+                             "title": getattr(r, "title", None) or getattr(chat, "title", None),
+                             "members": getattr(r, "participants_count", None),
+                             "request_needed": bool(getattr(r, "request_needed", False))})
+        except (InviteHashExpiredError, InviteHashInvalidError) as e:
+            res = ("dead", {"reason": type(e).__name__})
         except FloodWaitError as e:
             await nap(e.seconds + 1)
             continue
-        except Exception:
-            cache[h] = None
-        return cache[h]
+        except Exception as e:  # noqa
+            res = ("unknown", {"reason": f"{type(e).__name__}: {e}"})
+        cache[h] = res
+        return res
 
 
 # ---------------- сохранение найденных каналов ----------------
@@ -110,14 +115,16 @@ async def fetch_posts(client, chat, n):
 
 async def scan_links(client, sources, cache, delay):
     hashes = list(dict.fromkeys(h for t in sources for h in INVITE_RE.findall(t)))[:MAX_LINKS]
-    dead = []
+    items = []
     for h in hashes:
         new = h not in cache
-        if await check_invite(client, h, cache) is False:
-            dead.append(f"https://t.me/+{h}")
+        status, info = await check_invite(client, h, cache)
+        items.append({"url": f"https://t.me/+{h}", "status": status, **info})
         if new:
             await nap(delay)
-    return {"total": len(hashes), "dead": len(dead), "dead_list": dead}
+    dead = [i["url"] for i in items if i["status"] == "dead"]
+    return {"total": len(items), "dead": len(dead), "dead_list": dead,
+            "unknown": sum(i["status"] == "unknown" for i in items), "items": items}
 
 
 async def fetch(client, name, only_channels, posts=0, check_links=False, cache=None, delay=1.0):
