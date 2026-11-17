@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Веб-GUI для сканера каналов Telegram. Запуск: python server.py -> http://127.0.0.1:5000"""
 import asyncio
+from datetime import datetime, timezone
 import glob
 import json
 import os
@@ -46,6 +47,24 @@ async def check_invite(client, h, cache):
         except Exception:
             cache[h] = None
         return cache[h]
+
+
+# ---------------- сохранение найденных каналов ----------------
+RESULTS = os.path.join(BASE, "results.json")  # в .gitignore
+results_lock = threading.Lock()
+try:
+    with open(RESULTS, encoding="utf-8") as _f:
+        results = {c["username"]: c for c in json.load(_f)}
+except (OSError, ValueError, KeyError, TypeError):
+    results = {}
+
+
+def save_results():
+    with results_lock:
+        tmp = RESULTS + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(list(results.values()), f, ensure_ascii=False)
+        os.replace(tmp, RESULTS)
 
 
 async def fetch_posts(client, chat, n):
@@ -155,11 +174,16 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, 
             checked += 1
             if isinstance(r, dict):
                 found += 1
+                r["scanned_at"] = datetime.now(timezone.utc).isoformat()
+                results[r["username"]] = r
+                if found % 10 == 0:
+                    save_results()
                 q.put({"event": "found", "card": r})
             q.put({"event": "progress", "checked": checked, "found": found, "current": name})
             await asyncio.sleep(delay)
         q.put({"event": "done", "checked": checked, "found": found})
     finally:
+        save_results()
         await client.disconnect()
 
 
@@ -326,6 +350,25 @@ def auth_logout():
     if scan_lock.locked():
         return jsonify(error="Сначала останови поиск"), 409
     return auth_call(_logout)
+
+
+@app.route("/api/results")
+def api_results():
+    return jsonify(list(results.values()))
+
+
+@app.route("/api/results/clear", methods=["POST"])
+def api_results_clear():
+    if scan_lock.locked():
+        return jsonify(error="Сначала останови поиск"), 409
+    results.clear()
+    save_results()
+    for f in glob.glob(os.path.join(AVATARS, "*.jpg")):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    return jsonify(ok=True)
 
 
 @app.route("/")
