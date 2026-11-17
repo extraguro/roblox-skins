@@ -124,7 +124,7 @@ async def scan_links(client, sources, cache, delay):
             await nap(delay)
     dead = [i["url"] for i in items if i["status"] == "dead"]
     return {"total": len(items), "dead": len(dead), "dead_list": dead,
-            "unknown": sum(i["status"] == "unknown" for i in items), "items": items}
+            "unknown": sum(i["status"] == "unknown" for i in items), "items": items, "checked": True}
 
 
 async def fetch(client, name, only_channels, posts=0, check_links=False, cache=None, delay=1.0):
@@ -157,9 +157,12 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
     except Exception:
         pass
     post_texts, post_urls = await fetch_posts(client, chat, posts)
-    links = None
+    sources = [about] + post_texts + post_urls
     if check_links:
-        links = await scan_links(client, [about] + post_texts + post_urls, cache, delay)
+        links = await scan_links(client, sources, cache, delay)
+    else:  # только считаем ссылки, без запросов к Telegram
+        hs = list(dict.fromkeys(h for t in sources for h in INVITE_RE.findall(t)))[:MAX_LINKS]
+        links = {"total": len(hs), "dead": 0, "dead_list": [], "unknown": 0, "items": [], "checked": False}
     created = getattr(chat, "date", None)  # для не-участника это дата создания канала
     avatar = None
     try:
