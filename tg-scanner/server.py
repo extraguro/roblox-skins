@@ -4,13 +4,14 @@ import asyncio
 import glob
 import json
 import os
+import re
 import queue
 import threading
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 from telethon import TelegramClient, functions
 from telethon.errors import (
-    FloodWaitError, PasswordHashInvalidError, PhoneCodeExpiredError, PhoneCodeInvalidError,
+    FloodWaitError, InviteHashExpiredError, InviteHashInvalidError, PasswordHashInvalidError, PhoneCodeExpiredError, PhoneCodeInvalidError,
     PhoneNumberInvalidError, SessionPasswordNeededError, UsernameInvalidError, UsernameNotOccupiedError,
 )
 
@@ -25,7 +26,54 @@ app = Flask(__name__, static_folder="static")
 scan_lock = threading.Lock()  # один скан за раз (одна сессия Telegram)
 
 
-async def fetch(client, name, only_channels):
+INVITE_RE = re.compile(r"(?:t(?:elegram)?\.me/(?:\+|joinchat/)|tg://join\?invite=)([A-Za-z0-9_-]{10,})", re.I)
+MAX_LINKS = 30  # максимум уникальных ссылок на канал
+
+
+async def check_invite(client, h, cache):
+    """True = ссылка рабочая, False = просрочена/недействительна, None = не удалось проверить."""
+    if h in cache:
+        return cache[h]
+    while True:
+        try:
+            await client(functions.messages.CheckChatInviteRequest(h))
+            cache[h] = True
+        except (InviteHashExpiredError, InviteHashInvalidError):
+            cache[h] = False
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds + 1)
+            continue
+        except Exception:
+            cache[h] = None
+        return cache[h]
+
+
+async def scan_links(client, chat, about, posts, cache, delay):
+    texts = [about or ""]
+    if posts > 0:
+        try:
+            async for m in client.iter_messages(chat, limit=posts):
+                texts.append(m.message or "")
+                for e in (m.entities or []):
+                    u = getattr(e, "url", None)
+                    if u:
+                        texts.append(u)
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds + 1)
+        except Exception:
+            pass
+    hashes = list(dict.fromkeys(h for t in texts for h in INVITE_RE.findall(t)))[:MAX_LINKS]
+    dead = []
+    for h in hashes:
+        new = h not in cache
+        if await check_invite(client, h, cache) is False:
+            dead.append(f"https://t.me/+{h}")
+        if new:
+            await asyncio.sleep(delay)
+    return {"total": len(hashes), "dead": len(dead), "dead_list": dead}
+
+
+async def fetch(client, name, only_channels, link_posts=None, cache=None, delay=1.0):
     """Возвращает dict карточки, 'free', 'skip' или None."""
     if not USERNAME_RE.match(name):
         return "skip"
@@ -54,6 +102,9 @@ async def fetch(client, name, only_channels):
         await asyncio.sleep(e.seconds + 1)
     except Exception:
         pass
+    links = None
+    if link_posts is not None:
+        links = await scan_links(client, chat, about, link_posts, cache, delay)
     avatar = None
     try:
         path = await client.download_profile_photo(chat, file=os.path.join(AVATARS, f"{name}.jpg"))
@@ -62,12 +113,12 @@ async def fetch(client, name, only_channels):
     except Exception:
         pass
     return {"username": name, "title": chat.title, "about": about, "subs": subs,
-            "avatar": avatar, "type": "channel" if is_channel else "group",
+            "avatar": avatar, "links": links, "type": "channel" if is_channel else "group",
             "verified": bool(getattr(chat, "verified", False)),
             "url": f"https://t.me/{name}"}
 
 
-async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern):
+async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, link_posts):
     api_id, api_hash = get_creds()
     if not api_id or not api_hash:
         q.put({"event": "error", "msg": "Не заданы api_id / api_hash — введи их в блоке входа"})
@@ -79,6 +130,7 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern):
             q.put({"event": "error", "msg": "Нет входа в Telegram — войди в аккаунт в блоке входа"})
             return
         found = checked = 0
+        cache = {}
         names = []
         if pattern in ("plain", "both"):
             names += list(candidates(word, start, end, True))
@@ -88,7 +140,7 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern):
         for name in names:
             if stop.is_set() or found >= limit:
                 break
-            r = await fetch(client, name, only_channels)
+            r = await fetch(client, name, only_channels, link_posts, cache, delay)
             checked += 1
             if isinstance(r, dict):
                 found += 1
@@ -284,7 +336,8 @@ def api_scan():
     params = dict(word=word, start=int(g("start", 1)), end=int(g("max", 900)),
                   limit=int(g("limit", 200)), delay=float(g("delay", 1.2)),
                   only_channels=g("channels_only", "1") == "1",
-                  pattern=g("pattern", "plain"))
+                  pattern=g("pattern", "plain"),
+                  link_posts=(max(0, min(50, int(g("link_posts", 10)))) if g("check_links") == "1" else None))
     if not scan_lock.acquire(blocking=False):
         return Response("scan already running", 409)
     q, stop = queue.Queue(), threading.Event()
