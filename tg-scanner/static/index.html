@@ -34,15 +34,17 @@ main.list{grid-template-columns:1fr}
 </style></head><body>
 <header><div class="wrap">
 <form id="f" class="row">
+<label>Режим<select name="mode" id="mode"><option value="search">Поиск по слову (быстро)</option><option value="brute">Перебор имён word1…wordN</option></select></label>
 <label>Слово<input name="word" placeholder="channel" required></label>
-<label>От<input name="start" type="number" value="1" min="0"></label>
-<label>До<input name="max" type="number" value="900" min="1"></label>
+<label class="m-search">+ запросы с числами 1…N<input name="search_numbers" type="number" value="0" min="0" max="50" title="0 = только само слово. Каждый вариант — отдельный запрос к Telegram"></label>
+<label class="m-brute">От<input name="start" type="number" value="1" min="0"></label>
+<label class="m-brute">До<input name="max" type="number" value="900" min="1"></label>
 <label>Найти штук<input name="limit" type="number" value="200" min="1"></label>
-<label>Шаблон<select name="pattern"><option value="plain">word1, word2…</option><option value="underscore">word_1, word_2…</option><option value="both">оба</option></select></label>
+<label class="m-brute">Шаблон<select name="pattern"><option value="plain">word1, word2…</option><option value="underscore">word_1, word_2…</option><option value="both">оба</option></select></label>
 <label>Тип<select name="channels_only"><option value="1">Только каналы</option><option value="0">Каналы и группы</option></select></label>
 <label>Ссылки<select name="check_links"><option value="0">Не проверять</option><option value="1">Проверять инвайты</option></select></label>
 <label>Постов загружать<input name="posts" type="number" value="10" min="0" max="50" title="Для поиска по постам и проверки ссылок. 0 = не загружать"></label>
-<label>Пауза, с<input name="delay" type="number" value="1.2" step="0.1" min="0.3"></label>
+<label>Пауза, с<input name="delay" type="number" value="3" step="0.1" min="0.3"></label>
 <button id="go">Искать</button><button type="button" id="stop" class="stop" hidden>Стоп</button>
 <button type="button" id="tog" class="sec">Фильтры ▾</button>
 <span id="acc" hidden></span>
@@ -150,6 +152,8 @@ $('#f').onsubmit=e=>{e.preventDefault();if(es)return;$('#notes').replaceChildren
  es.onerror=()=>{if(es)end('Соединение закрыто (возможно, скан уже идёт в другой вкладке)',true)}};
 $('#stop').onclick=()=>{fetch('/api/stop',{method:'POST'}).catch(()=>{});end('Остановлено')};
 
+function modeUI(){const b=$('#mode').value==='brute';document.querySelectorAll('.m-brute').forEach(e=>e.style.display=b?'':'none');document.querySelectorAll('.m-search').forEach(e=>e.style.display=b?'none':'')}
+$('#mode').onchange=modeUI;modeUI();
 // ---------- вход в аккаунт ----------
 const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||('Ошибка '+r.status));return d});
 function authUI(st){const box=$('#auth'),acc=$('#acc'),ok=st.authorized;

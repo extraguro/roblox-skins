@@ -198,7 +198,11 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
             await flood(e.seconds + 1, method_of(e))
     if not res.chats:
         return "skip"  # пользователь или бот
-    chat = res.chats[0]
+    return await build_card(client, res.chats[0], name, only_channels, posts, check_links, cache, delay)
+
+
+async def build_card(client, chat, name, only_channels, posts, check_links, cache, delay):
+    """Карточка канала по уже известному объекту chat (без ResolveUsername)."""
     is_channel = bool(getattr(chat, "broadcast", False))
     if only_channels and not is_channel:
         return "skip"
@@ -238,7 +242,18 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
             "url": f"https://t.me/{name}"}
 
 
-async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, posts, check_links):
+def chat_username(chat):
+    u = getattr(chat, "username", None)
+    if u:
+        return u
+    for x in getattr(chat, "usernames", None) or []:
+        if getattr(x, "active", False) and getattr(x, "username", None):
+            return x.username
+    return None
+
+
+async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, posts, check_links,
+               mode="search", search_numbers=0):
     api_id, api_hash = get_creds()
     if not api_id or not api_hash:
         q.put({"event": "error", "msg": "Не заданы api_id / api_hash — введи их в блоке входа"})
@@ -252,32 +267,67 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, 
         found = checked = 0
         cache = {}
         DEGRADED.clear()
-        names = []
-        if pattern in ("plain", "both"):
-            names += list(candidates(word, start, end, True))
-        if pattern in ("underscore", "both"):
-            names += [f"{word}_{i}" for i in range(start, end + 1)]
-        q.put({"event": "start", "total": len(names)})
+        seen = set()
+
+        def emit(r):
+            nonlocal found
+            found += 1
+            r["scanned_at"] = datetime.now(timezone.utc).isoformat()
+            results[r["username"]] = r
+            if found % 10 == 0:
+                save_results()
+            q.put({"event": "found", "card": r})
+
         try:
-            for name in names:
-                if stop.is_set() or found >= limit:
-                    break
-                r = await fetch(client, name, only_channels, posts, check_links, cache, delay)
-                checked += 1
-                if isinstance(r, dict):
-                    found += 1
-                    r["scanned_at"] = datetime.now(timezone.utc).isoformat()
-                    results[r["username"]] = r
-                    if found % 10 == 0:
-                        save_results()
-                    q.put({"event": "found", "card": r})
-                q.put({"event": "progress", "checked": checked, "found": found, "current": name})
-                await nap(delay)
+            if mode == "search":
+                # обычный текстовый поиск Telegram: 1 запрос = до 100 каналов
+                queries = [word] + [f"{word}{i}" for i in range(1, search_numbers + 1)]
+                q.put({"event": "start", "total": len(queries)})
+                for query in queries:
+                    if stop.is_set() or found >= limit:
+                        break
+                    while True:
+                        try:
+                            res = await client(functions.contacts.SearchRequest(q=query, limit=100))
+                            break
+                        except FloodWaitError as e:
+                            if e.seconds > HARD_MAX:
+                                raise FloodAbort(e.seconds, method_of(e))
+                            await flood(e.seconds + 1, method_of(e))
+                    for chat in res.chats:
+                        if found >= limit:
+                            break
+                        uname = chat_username(chat)
+                        if not uname or uname.lower() in seen or not hasattr(chat, "broadcast"):
+                            continue
+                        seen.add(uname.lower())
+                        r = await build_card(client, chat, uname, only_channels, posts, check_links, cache, delay)
+                        if isinstance(r, dict):
+                            emit(r)
+                    checked += 1
+                    q.put({"event": "progress", "checked": checked, "found": found, "current": query})
+                    await nap(delay)
+            else:
+                names = []
+                if pattern in ("plain", "both"):
+                    names += list(candidates(word, start, end, True))
+                if pattern in ("underscore", "both"):
+                    names += [f"{word}_{i}" for i in range(start, end + 1)]
+                q.put({"event": "start", "total": len(names)})
+                for name in names:
+                    if stop.is_set() or found >= limit:
+                        break
+                    r = await fetch(client, name, only_channels, posts, check_links, cache, delay)
+                    checked += 1
+                    if isinstance(r, dict):
+                        emit(r)
+                    q.put({"event": "progress", "checked": checked, "found": found, "current": name})
+                    await nap(delay)
         except Stopped:
             pass
         except FloodAbort as e:
             save_results()
-            q.put({"event": "error", "msg": f"Telegram заблокировал поиск имён на {e.sec // 60} мин ({e.method}). "
+            q.put({"event": "error", "msg": f"Telegram ограничил запросы на {e.sec // 60} мин ({e.method}). "
                    f"Найдено до остановки: {found}. Попробуй позже, лучше с большей паузой."})
             return
         q.put({"event": "done", "checked": checked, "found": found})
@@ -498,7 +548,9 @@ def api_scan():
                   only_channels=g("channels_only", "1") == "1",
                   pattern=g("pattern", "plain"),
                   posts=max(0, min(50, int(g("posts", 10)))),
-                  check_links=g("check_links") == "1")
+                  check_links=g("check_links") == "1",
+                  mode="brute" if g("mode") == "brute" else "search",
+                  search_numbers=max(0, min(50, int(g("search_numbers", 0)))))
     if not scan_lock.acquire(blocking=False):
         # прошлый скан ещё жив (например, после обновления страницы) — останавливаем и ждём
         if ACTIVE["stop"] is not None:
