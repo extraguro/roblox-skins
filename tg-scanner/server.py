@@ -32,7 +32,7 @@ class Stopped(BaseException):
     """Поиск остановлен пользователем (BaseException, чтобы его не глотали except Exception)."""
 
 
-ACTIVE = {"stop": None}  # событие остановки текущего скана
+ACTIVE = {"stop": None, "q": None}  # событие остановки текущего скана
 
 
 async def nap(sec):
@@ -46,6 +46,17 @@ async def nap(sec):
         if left <= 0:
             return
         await asyncio.sleep(min(0.5, left))
+
+
+async def flood(sec):
+    """Долгая пауза по FloodWait: сообщаем интерфейсу и консоли, чтобы было видно, что это не зависание."""
+    q = ACTIVE.get("q")
+    print(f"FloodWait: Telegram просит подождать {int(sec)} с", flush=True)
+    if q is not None:
+        q.put({"event": "wait", "seconds": int(sec)})
+    await nap(sec)
+    if q is not None:
+        q.put({"event": "resume"})
 
 
 INVITE_RE = re.compile(r"(?:t(?:elegram)?\.me/(?:\+|joinchat/)|tg://join\?invite=)([A-Za-z0-9_-]{10,})", re.I)
@@ -68,7 +79,7 @@ async def check_invite(client, h, cache):
         except (InviteHashExpiredError, InviteHashInvalidError) as e:
             res = ("dead", {"reason": type(e).__name__})
         except FloodWaitError as e:
-            await nap(e.seconds + 1)
+            await flood(e.seconds + 1)
             continue
         except Exception as e:  # noqa
             res = ("unknown", {"reason": f"{type(e).__name__}: {e}"})
@@ -108,7 +119,7 @@ async def fetch_posts(client, chat, n):
                 if u:
                     urls.append(u)
     except FloodWaitError as e:
-        await nap(e.seconds + 1)
+        await flood(e.seconds + 1)
     except Exception:
         pass
     return texts, urls
@@ -145,7 +156,7 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
         except UsernameInvalidError:
             return "skip"
         except FloodWaitError as e:
-            await nap(e.seconds + 1)
+            await flood(e.seconds + 1)
     if not res.chats:
         return "skip"  # пользователь или бот
     chat = res.chats[0]
@@ -158,7 +169,7 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
         about = full.full_chat.about or ""
         subs = full.full_chat.participants_count
     except FloodWaitError as e:
-        await nap(e.seconds + 1)
+        await flood(e.seconds + 1)
     except Exception:
         pass
     post_texts, post_urls = await fetch_posts(client, chat, posts)
@@ -447,6 +458,7 @@ def api_scan():
             return Response("scan already running", 409)
     q, stop = queue.Queue(), threading.Event()
     ACTIVE["stop"] = stop
+    ACTIVE["q"] = q
 
     def worker():
         try:

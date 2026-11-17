@@ -77,7 +77,9 @@ main.list{grid-template-columns:1fr}
 <section id="auth" hidden></section>
 <main id="grid"></main><div id="empty" hidden>Ничего не подходит под фильтры</div>
 <script>
-const $=s=>document.querySelector(s),grid=$('#grid');let es=null,total=1,all=[];const on=new Set();
+const $=s=>document.querySelector(s),grid=$('#grid');let es=null,total=1,all=[],wt=null;function stopWait(){if(wt){clearInterval(wt);wt=null}}
+function startWait(sec){stopWait();let left=sec;const tick=()=>{const m=Math.floor(left/60),s=left%60;$('#st').innerHTML=`<span class="err">⏳ Telegram просит подождать: ${m} мин ${s} с</span> — это не зависание, поиск продолжится сам`;if(left--<=0)stopWait()};tick();wt=setInterval(tick,1000)}
+const on=new Set();
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const num=id=>{const v=$(id).value;return v===''?null:+v};
 function cardEl(c){const a=document.createElement('a');a.className='card';a.href=c.url;a.target='_blank';a.rel='noopener';
@@ -131,14 +133,16 @@ $('#tog').onclick=()=>{const h=$('#fl').hidden=!$('#fl').hidden;$('#tog').textCo
 $('#csv').onclick=()=>{const r=visible();const q=v=>'"'+String(v??'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
  const lines=[['username','title','type','subscribers','verified','url','invite_links','dead_links','created','about'].join(',')].concat(r.map(c=>[c.username,c.title,c.type,c.subs,c.verified,c.url,c.links?.total,c.links?.dead,c.created,c.about].map(q).join(',')));
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\n')],{type:'text/csv'}));a.download='channels.csv';a.click()};
-function end(msg,err){$('#go').disabled=$('#acc').hidden;$('#stop').hidden=true;if(es){es.close();es=null}if(msg)$('#st').innerHTML=err?`<span class="err">${esc(msg)}</span>`:esc(msg)}
+function end(msg,err){stopWait();$('#go').disabled=$('#acc').hidden;$('#stop').hidden=true;if(es){es.close();es=null}if(msg)$('#st').innerHTML=err?`<span class="err">${esc(msg)}</span>`:esc(msg)}
 $('#f').onsubmit=e=>{e.preventDefault();if(es)return;$('#prog div').style.width='0';
  $('#go').disabled=true;$('#stop').hidden=false;$('#st').textContent='Подключаюсь…';
  es=new EventSource('/api/scan?'+new URLSearchParams(new FormData(e.target)));
  es.onmessage=m=>{const d=JSON.parse(m.data);
-  if(d.event==='start')total=d.total;
+  if(d.event==='wait')startWait(d.seconds);
+  else if(d.event==='resume')stopWait();
+  else if(d.event==='start')total=d.total;
   else if(d.event==='found'){const i=all.findIndex(x=>x.username===d.card.username);i>=0?all[i]=d.card:all.push(d.card);rs()}
-  else if(d.event==='progress'){$('#st').textContent=`Проверено ${d.checked}/${total} · найдено ${d.found} · @${d.current}`;$('#prog div').style.width=(d.checked/total*100)+'%'}
+  else if(d.event==='progress'){stopWait();$('#st').textContent=`Проверено ${d.checked}/${total} · найдено ${d.found} · @${d.current}`;$('#prog div').style.width=(d.checked/total*100)+'%'}
   else if(d.event==='done')end(`Готово: проверено ${d.checked}, найдено ${d.found}`);
   else if(d.event==='error')end(d.msg,true)};
  es.onerror=()=>{if(es)end('Соединение закрыто (возможно, скан уже идёт в другой вкладке)',true)}};
