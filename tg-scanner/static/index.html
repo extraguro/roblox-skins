@@ -72,13 +72,14 @@ main.list{grid-template-columns:1fr}
   <button type="button" id="clr" class="sec">🗑 Очистить список</button>
  </div>
 </div>
+<div id="notes" style="font-size:13px;margin-top:6px"></div>
 <div id="bar"><span id="st">Введи слово и нажми «Искать»</span> · <b id="cnt"></b><div id="prog"><div></div></div></div>
 </div></header>
 <section id="auth" hidden></section>
 <main id="grid"></main><div id="empty" hidden>Ничего не подходит под фильтры</div>
 <script>
 const $=s=>document.querySelector(s),grid=$('#grid');let es=null,total=1,all=[],wt=null;function stopWait(){if(wt){clearInterval(wt);wt=null}}
-function startWait(sec){stopWait();let left=sec;const tick=()=>{const m=Math.floor(left/60),s=left%60;$('#st').innerHTML=`<span class="err">⏳ Telegram просит подождать: ${m} мин ${s} с</span> — это не зависание, поиск продолжится сам`;if(left--<=0)stopWait()};tick();wt=setInterval(tick,1000)}
+function startWait(sec,method){stopWait();let left=sec;const tick=()=>{const m=Math.floor(left/60),s=left%60;$('#st').innerHTML=`<span class="err">⏳ Telegram просит подождать: ${m} мин ${s} с</span> ${method?` (${method})`:''} — это не зависание, поиск продолжится сам`;if(left--<=0)stopWait()};tick();wt=setInterval(tick,1000)}
 const on=new Set();
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const num=id=>{const v=$(id).value;return v===''?null:+v};
@@ -134,11 +135,12 @@ $('#csv').onclick=()=>{const r=visible();const q=v=>'"'+String(v??'').replace(/"
  const lines=[['username','title','type','subscribers','verified','url','invite_links','dead_links','created','about'].join(',')].concat(r.map(c=>[c.username,c.title,c.type,c.subs,c.verified,c.url,c.links?.total,c.links?.dead,c.created,c.about].map(q).join(',')));
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\n')],{type:'text/csv'}));a.download='channels.csv';a.click()};
 function end(msg,err){stopWait();$('#go').disabled=$('#acc').hidden;$('#stop').hidden=true;if(es){es.close();es=null}if(msg)$('#st').innerHTML=err?`<span class="err">${esc(msg)}</span>`:esc(msg)}
-$('#f').onsubmit=e=>{e.preventDefault();if(es)return;$('#prog div').style.width='0';
+$('#f').onsubmit=e=>{e.preventDefault();if(es)return;$('#notes').replaceChildren();$('#prog div').style.width='0';
  $('#go').disabled=true;$('#stop').hidden=false;$('#st').textContent='Подключаюсь…';
  es=new EventSource('/api/scan?'+new URLSearchParams(new FormData(e.target)));
  es.onmessage=m=>{const d=JSON.parse(m.data);
-  if(d.event==='wait')startWait(d.seconds);
+  if(d.event==='wait')startWait(d.seconds,d.method);
+  else if(d.event==='notice'){const n=document.createElement('div');n.className='err';n.textContent='⚠ '+d.msg;$('#notes').append(n)}
   else if(d.event==='resume')stopWait();
   else if(d.event==='start')total=d.total;
   else if(d.event==='found'){const i=all.findIndex(x=>x.username===d.card.username);i>=0?all[i]=d.card:all.push(d.card);rs()}

@@ -48,15 +48,46 @@ async def nap(sec):
         await asyncio.sleep(min(0.5, left))
 
 
-async def flood(sec):
-    """Долгая пауза по FloodWait: сообщаем интерфейсу и консоли, чтобы было видно, что это не зависание."""
+DEGRADED = set()   # функции, отключённые до конца поиска из-за долгого FloodWait
+SOFT_MAX = 90      # необязательные данные: ждём не дольше, иначе отключаем функцию
+HARD_MAX = 600     # поиск имён: дольше — останавливаем поиск
+
+
+class FloodAbort(Exception):
+    def __init__(self, sec, method):
+        super().__init__(f"{method}: {sec} с")
+        self.sec, self.method = sec, method
+
+
+def method_of(e):
+    return type(getattr(e, "request", None)).__name__
+
+
+def notice(msg):
+    print(msg, flush=True)
     q = ACTIVE.get("q")
-    print(f"FloodWait: Telegram просит подождать {int(sec)} с", flush=True)
     if q is not None:
-        q.put({"event": "wait", "seconds": int(sec)})
+        q.put({"event": "notice", "msg": msg})
+
+
+async def flood(sec, method=None):
+    """Пауза по FloodWait: показываем в интерфейсе и консоли, чтобы было видно, что это не зависание."""
+    q = ACTIVE.get("q")
+    print(f"FloodWait: Telegram просит подождать {int(sec)} с (метод: {method or '?'})", flush=True)
+    if q is not None:
+        q.put({"event": "wait", "seconds": int(sec), "method": method})
     await nap(sec)
     if q is not None:
         q.put({"event": "resume"})
+
+
+async def soft_flood(feature, e, label):
+    """Необязательные данные: короткую паузу ждём, длинную — отключаем функцию до конца поиска."""
+    if e.seconds > SOFT_MAX:
+        DEGRADED.add(feature)
+        notice(f"Лимит Telegram на {e.seconds // 60} мин ({method_of(e)}): {label} отключены до конца поиска")
+    else:
+        await flood(e.seconds + 1, method_of(e))
 
 
 INVITE_RE = re.compile(r"(?:t(?:elegram)?\.me/(?:\+|joinchat/)|tg://join\?invite=)([A-Za-z0-9_-]{10,})", re.I)
@@ -68,6 +99,8 @@ async def check_invite(client, h, cache):
     """-> (status, info): alive | dead | unknown. Кэшируется по хэшу ссылки."""
     if h in cache:
         return cache[h]
+    if "invite" in DEGRADED:
+        return ("unknown", {"reason": "проверка ссылок отключена из-за лимита Telegram"})
     while True:
         try:
             r = await client(functions.messages.CheckChatInviteRequest(h))
@@ -79,7 +112,11 @@ async def check_invite(client, h, cache):
         except (InviteHashExpiredError, InviteHashInvalidError) as e:
             res = ("dead", {"reason": type(e).__name__})
         except FloodWaitError as e:
-            await flood(e.seconds + 1)
+            if e.seconds > SOFT_MAX:
+                DEGRADED.add("invite")
+                notice(f"Лимит Telegram на {e.seconds // 60} мин ({method_of(e)}): проверка ссылок отключена до конца поиска")
+                return ("unknown", {"reason": f"FloodWait {e.seconds} с"})
+            await flood(e.seconds + 1, method_of(e))
             continue
         except Exception as e:  # noqa
             res = ("unknown", {"reason": f"{type(e).__name__}: {e}"})
@@ -108,7 +145,7 @@ def save_results():
 async def fetch_posts(client, chat, n):
     """Последние n постов: (тексты, ссылки из entities)."""
     texts, urls = [], []
-    if n <= 0:
+    if n <= 0 or "posts" in DEGRADED:
         return texts, urls
     try:
         async for m in client.iter_messages(chat, limit=n):
@@ -119,7 +156,7 @@ async def fetch_posts(client, chat, n):
                 if u:
                     urls.append(u)
     except FloodWaitError as e:
-        await flood(e.seconds + 1)
+        await soft_flood("posts", e, "посты")
     except Exception:
         pass
     return texts, urls
@@ -156,7 +193,9 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
         except UsernameInvalidError:
             return "skip"
         except FloodWaitError as e:
-            await flood(e.seconds + 1)
+            if e.seconds > HARD_MAX:
+                raise FloodAbort(e.seconds, method_of(e))
+            await flood(e.seconds + 1, method_of(e))
     if not res.chats:
         return "skip"  # пользователь или бот
     chat = res.chats[0]
@@ -164,14 +203,15 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
     if only_channels and not is_channel:
         return "skip"
     about, subs = "", None
-    try:
-        full = await client(functions.channels.GetFullChannelRequest(chat))
-        about = full.full_chat.about or ""
-        subs = full.full_chat.participants_count
-    except FloodWaitError as e:
-        await flood(e.seconds + 1)
-    except Exception:
-        pass
+    if "full" not in DEGRADED:
+        try:
+            full = await client(functions.channels.GetFullChannelRequest(chat))
+            about = full.full_chat.about or ""
+            subs = full.full_chat.participants_count
+        except FloodWaitError as e:
+            await soft_flood("full", e, "описание и подписчики")
+        except Exception:
+            pass
     post_texts, post_urls = await fetch_posts(client, chat, posts)
     sources = [about] + post_texts + post_urls
     if check_links:
@@ -181,12 +221,15 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
         links = {"total": len(hs), "dead": 0, "dead_list": [], "unknown": 0, "items": [], "checked": False}
     created = getattr(chat, "date", None)  # для не-участника это дата создания канала
     avatar = None
-    try:
-        path = await client.download_profile_photo(chat, file=os.path.join(AVATARS, f"{name}.jpg"))
-        if path:
-            avatar = f"/avatars/{name}.jpg"
-    except Exception:
-        pass
+    if "photo" not in DEGRADED:
+        try:
+            path = await client.download_profile_photo(chat, file=os.path.join(AVATARS, f"{name}.jpg"))
+            if path:
+                avatar = f"/avatars/{name}.jpg"
+        except FloodWaitError as e:
+            await soft_flood("photo", e, "аватарки")
+        except Exception:
+            pass
     return {"username": name, "title": chat.title, "about": about, "subs": subs,
             "avatar": avatar, "links": links,
             "posts": [t[:1500] for t in post_texts],
@@ -208,6 +251,7 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, 
             return
         found = checked = 0
         cache = {}
+        DEGRADED.clear()
         names = []
         if pattern in ("plain", "both"):
             names += list(candidates(word, start, end, True))
@@ -231,6 +275,11 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, 
                 await nap(delay)
         except Stopped:
             pass
+        except FloodAbort as e:
+            save_results()
+            q.put({"event": "error", "msg": f"Telegram заблокировал поиск имён на {e.sec // 60} мин ({e.method}). "
+                   f"Найдено до остановки: {found}. Попробуй позже, лучше с большей паузой."})
+            return
         q.put({"event": "done", "checked": checked, "found": found})
     finally:
         save_results()
