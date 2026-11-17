@@ -48,21 +48,28 @@ async def check_invite(client, h, cache):
         return cache[h]
 
 
-async def scan_links(client, chat, about, posts, cache, delay):
-    texts = [about or ""]
-    if posts > 0:
-        try:
-            async for m in client.iter_messages(chat, limit=posts):
-                texts.append(m.message or "")
-                for e in (m.entities or []):
-                    u = getattr(e, "url", None)
-                    if u:
-                        texts.append(u)
-        except FloodWaitError as e:
-            await asyncio.sleep(e.seconds + 1)
-        except Exception:
-            pass
-    hashes = list(dict.fromkeys(h for t in texts for h in INVITE_RE.findall(t)))[:MAX_LINKS]
+async def fetch_posts(client, chat, n):
+    """Последние n постов: (тексты, ссылки из entities)."""
+    texts, urls = [], []
+    if n <= 0:
+        return texts, urls
+    try:
+        async for m in client.iter_messages(chat, limit=n):
+            if m.message:
+                texts.append(m.message)
+            for e in (m.entities or []):
+                u = getattr(e, "url", None)
+                if u:
+                    urls.append(u)
+    except FloodWaitError as e:
+        await asyncio.sleep(e.seconds + 1)
+    except Exception:
+        pass
+    return texts, urls
+
+
+async def scan_links(client, sources, cache, delay):
+    hashes = list(dict.fromkeys(h for t in sources for h in INVITE_RE.findall(t)))[:MAX_LINKS]
     dead = []
     for h in hashes:
         new = h not in cache
@@ -73,7 +80,7 @@ async def scan_links(client, chat, about, posts, cache, delay):
     return {"total": len(hashes), "dead": len(dead), "dead_list": dead}
 
 
-async def fetch(client, name, only_channels, link_posts=None, cache=None, delay=1.0):
+async def fetch(client, name, only_channels, posts=0, check_links=False, cache=None, delay=1.0):
     """Возвращает dict карточки, 'free', 'skip' или None."""
     if not USERNAME_RE.match(name):
         return "skip"
@@ -102,9 +109,11 @@ async def fetch(client, name, only_channels, link_posts=None, cache=None, delay=
         await asyncio.sleep(e.seconds + 1)
     except Exception:
         pass
+    post_texts, post_urls = await fetch_posts(client, chat, posts)
     links = None
-    if link_posts is not None:
-        links = await scan_links(client, chat, about, link_posts, cache, delay)
+    if check_links:
+        links = await scan_links(client, [about] + post_texts + post_urls, cache, delay)
+    created = getattr(chat, "date", None)  # для не-участника это дата создания канала
     avatar = None
     try:
         path = await client.download_profile_photo(chat, file=os.path.join(AVATARS, f"{name}.jpg"))
@@ -113,12 +122,14 @@ async def fetch(client, name, only_channels, link_posts=None, cache=None, delay=
     except Exception:
         pass
     return {"username": name, "title": chat.title, "about": about, "subs": subs,
-            "avatar": avatar, "links": links, "type": "channel" if is_channel else "group",
+            "avatar": avatar, "links": links,
+            "posts": [t[:1500] for t in post_texts],
+            "created": created.isoformat() if created else None, "type": "channel" if is_channel else "group",
             "verified": bool(getattr(chat, "verified", False)),
             "url": f"https://t.me/{name}"}
 
 
-async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, link_posts):
+async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, posts, check_links):
     api_id, api_hash = get_creds()
     if not api_id or not api_hash:
         q.put({"event": "error", "msg": "Не заданы api_id / api_hash — введи их в блоке входа"})
@@ -140,7 +151,7 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, 
         for name in names:
             if stop.is_set() or found >= limit:
                 break
-            r = await fetch(client, name, only_channels, link_posts, cache, delay)
+            r = await fetch(client, name, only_channels, posts, check_links, cache, delay)
             checked += 1
             if isinstance(r, dict):
                 found += 1
@@ -337,7 +348,8 @@ def api_scan():
                   limit=int(g("limit", 200)), delay=float(g("delay", 1.2)),
                   only_channels=g("channels_only", "1") == "1",
                   pattern=g("pattern", "plain"),
-                  link_posts=(max(0, min(50, int(g("link_posts", 10)))) if g("check_links") == "1" else None))
+                  posts=max(0, min(50, int(g("posts", 10)))),
+                  check_links=g("check_links") == "1")
     if not scan_lock.acquire(blocking=False):
         return Response("scan already running", 409)
     q, stop = queue.Queue(), threading.Event()

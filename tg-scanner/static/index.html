@@ -41,7 +41,7 @@ main.list{grid-template-columns:1fr}
 <label>Шаблон<select name="pattern"><option value="plain">word1, word2…</option><option value="underscore">word_1, word_2…</option><option value="both">оба</option></select></label>
 <label>Тип<select name="channels_only"><option value="1">Только каналы</option><option value="0">Каналы и группы</option></select></label>
 <label>Ссылки<select name="check_links"><option value="0">Не проверять</option><option value="1">Проверять инвайты</option></select></label>
-<label>Постов для ссылок<input name="link_posts" type="number" value="10" min="0" max="50" title="0 = только описание"></label>
+<label>Постов загружать<input name="posts" type="number" value="10" min="0" max="50" title="Для поиска по постам и проверки ссылок. 0 = не загружать"></label>
 <label>Пауза, с<input name="delay" type="number" value="1.2" step="0.1" min="0.3"></label>
 <button id="go">Искать</button><button type="button" id="stop" class="stop" hidden>Стоп</button>
 <button type="button" id="tog" class="sec">Фильтры ▾</button>
@@ -51,9 +51,12 @@ main.list{grid-template-columns:1fr}
  <div class="row">
   <label>Подписчиков от<input id="fmin" type="number" min="0" placeholder="0"></label>
   <label>до<input id="fmax" type="number" min="0" placeholder="∞"></label>
-  <label>Текст в названии/описании<input id="fq" placeholder="поиск…"></label>
+  <label>Текст<input id="fq" placeholder="поиск…"></label>
+  <label>Где искать<select id="fin"><option value="all">Название, описание, посты</option><option value="meta">Название и описание</option><option value="posts">Только посты</option></select></label>
+  <label>Создан от<input id="fd1" type="date"></label>
+  <label>Создан до<input id="fd2" type="date"></label>
   <label>Мёртвых ссылок ≥<input id="fdead" type="number" min="0" placeholder="0"></label>
-  <label>Сортировка<select id="sort"><option value="order">По порядку поиска</option><option value="subs-desc">Подписчики ↓</option><option value="subs-asc">Подписчики ↑</option><option value="dead">Мёртвые ссылки ↓</option><option value="name">Название А–Я</option><option value="user">Username А–Я</option></select></label>
+  <label>Сортировка<select id="sort"><option value="order">По порядку поиска</option><option value="subs-desc">Подписчики ↓</option><option value="subs-asc">Подписчики ↑</option><option value="new">Создан: новые сверху</option><option value="old">Создан: старые сверху</option><option value="dead">Мёртвые ссылки ↓</option><option value="name">Название А–Я</option><option value="user">Username А–Я</option></select></label>
   <label>Вид<select id="view"><option value="grid">Сетка</option><option value="list">Список</option></select></label>
  </div>
  <div class="chips">
@@ -77,13 +80,21 @@ const num=id=>{const v=$(id).value;return v===''?null:+v};
 function cardEl(c){const a=document.createElement('a');a.className='card';a.href=c.url;a.target='_blank';a.rel='noopener';
  const av=c.avatar?`<img class="av" src="${c.avatar}" loading="lazy">`:`<div class="av">${esc((c.title||'?')[0])}</div>`;
  const subs=c.subs!=null?c.subs.toLocaleString('ru')+' подп.':'';
- a.innerHTML=`${av}<div><div class="t">${esc(c.title)}${c.verified?' ✔':''}</div><div class="u">@${c.username}</div><div class="s">${c.type==='channel'?'Канал':'Группа'} · ${subs}</div><div class="d">${esc(c.about)}</div>${linkInfo(c)}</div>`;return a}
+ a.innerHTML=`${av}<div><div class="t">${esc(c.title)}${c.verified?' ✔':''}</div><div class="u">@${c.username}</div><div class="s">${c.type==='channel'?'Канал':'Группа'} · ${subs}${c.created?' · создан '+fmtDate(c):''}</div><div class="d">${esc(c.about)}</div>${postSnip(c)}${linkInfo(c)}</div>`;return a}
+function postSnip(c){const q=$('#fq').value.trim().toLowerCase();if(!q||$('#fin').value==='meta')return'';const p=postHit(c,q);if(!p)return'';const i=p.toLowerCase().indexOf(q),s=Math.max(0,i-40);return `<div class="s">📝 …${esc(p.slice(s,i+q.length+80).replace(/\s+/g,' '))}…</div>`}
+function fmtDate(c){return c.created?new Date(c.created).toLocaleDateString('ru'):''}
 function linkInfo(c){const l=c.links;if(!l)return'';const tip=esc(l.dead_list.join('\n'));return `<div class="s" title="${tip}">🔗 ${l.total} ссылок · ${l.dead?`<span class="err">⚠ ${l.dead} мёртвых</span>`:'мёртвых нет'}</div>`}
+function postHit(c,q){return (c.posts||[]).find(p=>p.toLowerCase().includes(q))}
+function matchQ(c,q){const w=$('#fin').value;
+ const meta=((c.title||'')+' '+(c.about||'')+' '+c.username).toLowerCase().includes(q);
+ if(w==='meta')return meta;if(w==='posts')return !!postHit(c,q);return meta||!!postHit(c,q)}
 function visible(){const mn=num('#fmin'),mx=num('#fmax'),q=$('#fq').value.trim().toLowerCase();
  let r=all.filter(c=>{const s=c.subs??0;
   const dn=num('#fdead');if(dn!=null&&((c.links?.dead)??0)<dn)return false;
   if(mn!=null&&s<mn)return false;if(mx!=null&&s>mx)return false;
-  if(q&&!((c.title||'')+' '+(c.about||'')+' '+c.username).toLowerCase().includes(q))return false;
+  const d1=$('#fd1').value,d2=$('#fd2').value;
+  if(d1||d2){if(!c.created)return false;const d=c.created.slice(0,10);if(d1&&d<d1)return false;if(d2&&d>d2)return false}
+  if(q&&!matchQ(c,q))return false;
   if(on.has('desc')&&!c.about)return false;if(on.has('ava')&&!c.avatar)return false;
   if(on.has('ver')&&!c.verified)return false;if(on.has('ch')&&c.type!=='channel')return false;
   if(on.has('gr')&&c.type!=='group')return false;return true});
@@ -91,6 +102,8 @@ function visible(){const mn=num('#fmin'),mx=num('#fmax'),q=$('#fq').value.trim()
  if(so==='subs-desc')r.sort((a,b)=>(b.subs??-1)-(a.subs??-1));
  else if(so==='subs-asc')r.sort((a,b)=>(a.subs??1e12)-(b.subs??1e12));
  else if(so==='dead')r.sort((a,b)=>((b.links?.dead)??-1)-((a.links?.dead)??-1));
+ else if(so==='new')r.sort((a,b)=>(b.created||'').localeCompare(a.created||''));
+ else if(so==='old')r.sort((a,b)=>(a.created||'9').localeCompare(b.created||'9'));
  else if(so==='name')r.sort((a,b)=>(a.title||'').localeCompare(b.title||'','ru'));
  else if(so==='user')r.sort((a,b)=>a.username.localeCompare(b.username));
  return r}
@@ -98,16 +111,16 @@ function render(){const r=visible();grid.className=$('#view').value==='list'?'li
  grid.replaceChildren(...r.map(cardEl));$('#cnt').textContent=all.length?`показано ${r.length} из ${all.length}`:'';
  $('#empty').hidden=!(all.length&&!r.length)}
 let t=null;const rs=()=>{clearTimeout(t);t=setTimeout(render,80)};
-['#fmin','#fmax','#fq','#fdead'].forEach(s=>$(s).oninput=rs);['#sort','#view'].forEach(s=>$(s).onchange=render);
+['#fmin','#fmax','#fq','#fdead'].forEach(s=>$(s).oninput=rs);['#sort','#view','#fin','#fd1','#fd2'].forEach(s=>$(s).onchange=render);
 document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{const k=ch.dataset.k;
  if(k==='ch'&&!on.has('ch'))off('gr');if(k==='gr'&&!on.has('gr'))off('ch');
  on.has(k)?on.delete(k):on.add(k);ch.classList.toggle('on',on.has(k));render()});
 function off(k){on.delete(k);document.querySelector(`.chip[data-k=${k}]`).classList.remove('on')}
 $('#reset').onclick=()=>{on.clear();document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
- ['#fmin','#fmax','#fq','#fdead'].forEach(s=>$(s).value='');$('#sort').value='order';render()};
+ ['#fmin','#fmax','#fq','#fdead','#fd1','#fd2'].forEach(s=>$(s).value='');$('#fin').value='all';$('#sort').value='order';render()};
 $('#tog').onclick=()=>{const h=$('#fl').hidden=!$('#fl').hidden;$('#tog').textContent=h?'Фильтры ▾':'Фильтры ▴'};
 $('#csv').onclick=()=>{const r=visible();const q=v=>'"'+String(v??'').replace(/"/g,'""').replace(/\n/g,' ')+'"';
- const lines=[['username','title','type','subscribers','verified','url','invite_links','dead_links','about'].join(',')].concat(r.map(c=>[c.username,c.title,c.type,c.subs,c.verified,c.url,c.links?.total,c.links?.dead,c.about].map(q).join(',')));
+ const lines=[['username','title','type','subscribers','verified','url','invite_links','dead_links','created','about'].join(',')].concat(r.map(c=>[c.username,c.title,c.type,c.subs,c.verified,c.url,c.links?.total,c.links?.dead,c.created,c.about].map(q).join(',')));
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\n')],{type:'text/csv'}));a.download='channels.csv';a.click()};
 function end(msg,err){$('#go').disabled=$('#acc').hidden;$('#stop').hidden=true;if(es){es.close();es=null}if(msg)$('#st').innerHTML=err?`<span class="err">${esc(msg)}</span>`:esc(msg)}
 $('#f').onsubmit=e=>{e.preventDefault();if(es)return;all=[];render();$('#prog div').style.width='0';
