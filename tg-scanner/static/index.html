@@ -138,7 +138,7 @@ $('#f').onsubmit=e=>{e.preventDefault();if(es)return;$('#prog div').style.width=
   else if(d.event==='done')end(`Готово: проверено ${d.checked}, найдено ${d.found}`);
   else if(d.event==='error')end(d.msg,true)};
  es.onerror=()=>{if(es)end('Соединение закрыто (возможно, скан уже идёт в другой вкладке)',true)}};
-$('#stop').onclick=()=>end('Остановлено');
+$('#stop').onclick=()=>{fetch('/api/stop',{method:'POST'}).catch(()=>{});end('Остановлено')};
 
 // ---------- вход в аккаунт ----------
 const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||('Ошибка '+r.status));return d});

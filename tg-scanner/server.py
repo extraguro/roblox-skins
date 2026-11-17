@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import re
+import time
 import queue
 import threading
 
@@ -27,6 +28,26 @@ app = Flask(__name__, static_folder="static")
 scan_lock = threading.Lock()  # один скан за раз (одна сессия Telegram)
 
 
+class Stopped(BaseException):
+    """Поиск остановлен пользователем (BaseException, чтобы его не глотали except Exception)."""
+
+
+ACTIVE = {"stop": None}  # событие остановки текущего скана
+
+
+async def nap(sec):
+    """sleep, который можно прервать кнопкой «Стоп» (в т.ч. посреди FloodWait)."""
+    end = time.monotonic() + sec
+    while True:
+        st = ACTIVE["stop"]
+        if st is not None and st.is_set():
+            raise Stopped()
+        left = end - time.monotonic()
+        if left <= 0:
+            return
+        await asyncio.sleep(min(0.5, left))
+
+
 INVITE_RE = re.compile(r"(?:t(?:elegram)?\.me/(?:\+|joinchat/)|tg://join\?invite=)([A-Za-z0-9_-]{10,})", re.I)
 MAX_LINKS = 30  # максимум уникальных ссылок на канал
 
@@ -42,7 +63,7 @@ async def check_invite(client, h, cache):
         except (InviteHashExpiredError, InviteHashInvalidError):
             cache[h] = False
         except FloodWaitError as e:
-            await asyncio.sleep(e.seconds + 1)
+            await nap(e.seconds + 1)
             continue
         except Exception:
             cache[h] = None
@@ -81,7 +102,7 @@ async def fetch_posts(client, chat, n):
                 if u:
                     urls.append(u)
     except FloodWaitError as e:
-        await asyncio.sleep(e.seconds + 1)
+        await nap(e.seconds + 1)
     except Exception:
         pass
     return texts, urls
@@ -95,7 +116,7 @@ async def scan_links(client, sources, cache, delay):
         if await check_invite(client, h, cache) is False:
             dead.append(f"https://t.me/+{h}")
         if new:
-            await asyncio.sleep(delay)
+            await nap(delay)
     return {"total": len(hashes), "dead": len(dead), "dead_list": dead}
 
 
@@ -112,7 +133,7 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
         except UsernameInvalidError:
             return "skip"
         except FloodWaitError as e:
-            await asyncio.sleep(e.seconds + 1)
+            await nap(e.seconds + 1)
     if not res.chats:
         return "skip"  # пользователь или бот
     chat = res.chats[0]
@@ -125,7 +146,7 @@ async def fetch(client, name, only_channels, posts=0, check_links=False, cache=N
         about = full.full_chat.about or ""
         subs = full.full_chat.participants_count
     except FloodWaitError as e:
-        await asyncio.sleep(e.seconds + 1)
+        await nap(e.seconds + 1)
     except Exception:
         pass
     post_texts, post_urls = await fetch_posts(client, chat, posts)
@@ -167,20 +188,23 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, 
         if pattern in ("underscore", "both"):
             names += [f"{word}_{i}" for i in range(start, end + 1)]
         q.put({"event": "start", "total": len(names)})
-        for name in names:
-            if stop.is_set() or found >= limit:
-                break
-            r = await fetch(client, name, only_channels, posts, check_links, cache, delay)
-            checked += 1
-            if isinstance(r, dict):
-                found += 1
-                r["scanned_at"] = datetime.now(timezone.utc).isoformat()
-                results[r["username"]] = r
-                if found % 10 == 0:
-                    save_results()
-                q.put({"event": "found", "card": r})
-            q.put({"event": "progress", "checked": checked, "found": found, "current": name})
-            await asyncio.sleep(delay)
+        try:
+            for name in names:
+                if stop.is_set() or found >= limit:
+                    break
+                r = await fetch(client, name, only_channels, posts, check_links, cache, delay)
+                checked += 1
+                if isinstance(r, dict):
+                    found += 1
+                    r["scanned_at"] = datetime.now(timezone.utc).isoformat()
+                    results[r["username"]] = r
+                    if found % 10 == 0:
+                        save_results()
+                    q.put({"event": "found", "card": r})
+                q.put({"event": "progress", "checked": checked, "found": found, "current": name})
+                await nap(delay)
+        except Stopped:
+            pass
         q.put({"event": "done", "checked": checked, "found": found})
     finally:
         save_results()
@@ -381,6 +405,13 @@ def avatar(f):
     return send_from_directory(AVATARS, f)
 
 
+@app.route("/api/stop", methods=["POST"])
+def api_stop():
+    if ACTIVE["stop"] is not None:
+        ACTIVE["stop"].set()
+    return jsonify(ok=True)
+
+
 @app.route("/api/scan")
 def api_scan():
     g = request.args.get
@@ -394,8 +425,13 @@ def api_scan():
                   posts=max(0, min(50, int(g("posts", 10)))),
                   check_links=g("check_links") == "1")
     if not scan_lock.acquire(blocking=False):
-        return Response("scan already running", 409)
+        # прошлый скан ещё жив (например, после обновления страницы) — останавливаем и ждём
+        if ACTIVE["stop"] is not None:
+            ACTIVE["stop"].set()
+        if not scan_lock.acquire(timeout=10):
+            return Response("scan already running", 409)
     q, stop = queue.Queue(), threading.Event()
+    ACTIVE["stop"] = stop
 
     def worker():
         try:
@@ -411,7 +447,11 @@ def api_scan():
     def stream():
         try:
             while True:
-                item = q.get()
+                try:
+                    item = q.get(timeout=10)
+                except queue.Empty:
+                    yield ": ping\n\n"  # заодно замечаем, что клиент ушёл
+                    continue
                 if item is None:
                     break
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
