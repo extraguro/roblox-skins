@@ -17,6 +17,7 @@ from telethon.errors import (
     PhoneNumberInvalidError, SessionPasswordNeededError, UsernameInvalidError, UsernameNotOccupiedError,
 )
 
+import webscan as W
 from tg_scan import USERNAME_RE, candidates
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -336,6 +337,101 @@ async def scan(q, stop, word, start, end, limit, delay, only_channels, pattern, 
         await client.disconnect()
 
 
+
+def count_links(sources):
+    hs = list(dict.fromkeys(h for t in sources for h in INVITE_RE.findall(t)))[:MAX_LINKS]
+    return {"total": len(hs), "dead": 0, "dead_list": [], "unknown": 0, "items": [], "checked": False}
+
+
+async def web_card(name, only_channels, posts):
+    """Карточка по странице t.me/<имя>. -> dict | 'free' | 'skip' | 'unknown' | 'error'"""
+    for attempt in range(4):
+        status, text, headers = await asyncio.to_thread(W.http_get, f"{W.BASE}/{name}")
+        if status == 429:
+            try:
+                ra = int(headers.get("Retry-After") or 30)
+            except ValueError:
+                ra = 30
+            if ra > HARD_MAX:
+                raise FloodAbort(ra, "t.me")
+            await flood(ra + 1, "t.me")
+            continue
+        if status is None:  # сеть
+            await nap(2 * (attempt + 1))
+            continue
+        break
+    else:
+        return "error"
+    if status != 200:
+        return "error"
+    info = W.classify(name, W.parse(text))
+    if info["state"] != "ok":
+        return info["state"]
+    if only_channels and info["type"] != "channel":
+        return "skip"
+    texts, urls = [], []
+    if posts > 0 and info["type"] == "channel":
+        texts, urls = await asyncio.to_thread(W.fetch_posts, name, posts)
+    avatar = None
+    if info["image"]:
+        st, data, _ = await asyncio.to_thread(W.http_get, info["image"], True)
+        if st == 200 and data:
+            try:
+                with open(os.path.join(AVATARS, f"{name}.jpg"), "wb") as f:
+                    f.write(data)
+                avatar = f"/avatars/{name}.jpg"
+            except OSError:
+                avatar = info["image"]
+        else:
+            avatar = info["image"]
+    return {"username": name, "title": info["title"], "about": info["about"], "subs": info["subs"],
+            "avatar": avatar, "links": count_links([info["about"]] + texts + urls),
+            "posts": [t[:1500] for t in texts], "created": None, "type": info["type"],
+            "verified": False, "url": f"https://t.me/{name}"}
+
+
+async def scan_web(q, stop, word, start, end, limit, delay, only_channels, pattern, posts, **_):
+    """Перебор имён через публичные страницы t.me — без аккаунта и без Telegram API."""
+    found = checked = bad = 0
+    warned = False
+    names = []
+    if pattern in ("plain", "both"):
+        names += list(candidates(word, start, end, True))
+    if pattern in ("underscore", "both"):
+        names += [f"{word}_{i}" for i in range(start, end + 1)]
+    q.put({"event": "start", "total": len(names)})
+    try:
+        for name in names:
+            if stop.is_set() or found >= limit:
+                break
+            if USERNAME_RE.match(name):
+                r = await web_card(name, only_channels, posts)
+                if isinstance(r, dict):
+                    found += 1
+                    r["scanned_at"] = datetime.now(timezone.utc).isoformat()
+                    results[name] = r
+                    if found % 10 == 0:
+                        save_results()
+                    q.put({"event": "found", "card": r})
+                elif r in ("unknown", "error"):
+                    bad += 1
+                    if not warned and bad >= 3:
+                        warned = True
+                        notice("Страницы t.me не распознаются или не загружаются (возможно, t.me ограничил запросы "
+                               "или изменил вёрстку). Запусти: py check_page.py <имя> и пришли вывод.")
+            checked += 1
+            q.put({"event": "progress", "checked": checked, "found": found, "current": name})
+            await nap(delay)
+    except Stopped:
+        pass
+    except FloodAbort as e:
+        q.put({"event": "error", "msg": f"t.me просит подождать {e.sec // 60} мин. Найдено до остановки: {found}."})
+        return
+    finally:
+        save_results()
+    q.put({"event": "done", "checked": checked, "found": found})
+
+
 # ---------------- вход в аккаунт через GUI ----------------
 CONFIG = os.path.join(BASE, "tg_config.json")  # api_id/api_hash, если не заданы в env (в .gitignore)
 
@@ -549,7 +645,7 @@ def api_scan():
                   pattern=g("pattern", "plain"),
                   posts=max(0, min(50, int(g("posts", 10)))),
                   check_links=g("check_links") == "1",
-                  mode="brute" if g("mode") == "brute" else "search",
+                  mode=(g("mode") if g("mode") in ("web", "brute", "search") else "web"),
                   search_numbers=max(0, min(50, int(g("search_numbers", 0)))))
     if not scan_lock.acquire(blocking=False):
         # прошлый скан ещё жив (например, после обновления страницы) — останавливаем и ждём
@@ -563,7 +659,7 @@ def api_scan():
 
     def worker():
         try:
-            asyncio.run(scan(q, stop, **params))
+            asyncio.run((scan_web if params["mode"] == "web" else scan)(q, stop, **params))
         except Exception as e:  # noqa
             q.put({"event": "error", "msg": str(e)})
         finally:
